@@ -1,4 +1,3 @@
-const mqtt = require("mqtt");
 const Accessory = require("./accessory");
 
 let Service, Characteristic;
