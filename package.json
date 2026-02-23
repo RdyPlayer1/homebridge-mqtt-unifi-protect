@@ -1,6 +1,6 @@
 {
   "name": "homebridge-mqtt-unifi-protect",
-  "version": "3.0.0",
+  "version": "3.0.3",
   "description": "UniFi Protect MQTT Alarm Platform",
   "main": "index.js",
   "keywords": [
@@ -11,6 +11,9 @@
     "protect",
     "alarm"
   ],
+  "dependencies": {
+    "mqtt": "^4.3.7"
+  },
   "homepage": "https://github.com/RdyPlayer1/homebridge-mqtt-unifi-protect",
   "bugs": {
     "url": "https://github.com/RdyPlayer1/homebridge-mqtt-unifi-protect/issues"
