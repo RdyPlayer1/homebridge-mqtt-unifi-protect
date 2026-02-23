@@ -1,6 +1,6 @@
 {
   "name": "homebridge-mqtt-unifi-protect",
-  "version": "3.0.3",
+  "version": "3.1.0",
   "description": "UniFi Protect MQTT Alarm Platform",
   "main": "index.js",
   "keywords": [
