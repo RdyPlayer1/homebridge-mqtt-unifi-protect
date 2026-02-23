@@ -5,6 +5,11 @@
   "schema": {
     "type": "object",
     "properties": {
+      "alarmName": {
+        "title": "Alarm Accessory Name",
+        "type": "string",
+        "default": "Home Alarm"
+      },
       "mqttHost": {
         "title": "MQTT Broker Host",
         "type": "string",
@@ -33,32 +38,19 @@
         "type": "number",
         "default": 120
       },
-      "enableSiren": {
-        "title": "Enable Siren Switch",
-        "type": "boolean",
-        "default": true
-      },
       "devices": {
-        "title": "Named Devices (Optional)",
+        "title": "Sensors",
         "type": "array",
         "items": {
           "type": "object",
           "properties": {
             "name": { "type": "string", "title": "Device Name" },
             "mac": { "type": "string", "title": "MAC Address (no colons)" },
-            "type": {
-              "type": "string",
-              "enum": ["contact", "motion"],
-              "title": "Sensor Type"
-            },
-            "armHome": { "type": "boolean", "title": "Arm in Home Mode" },
-            "armAway": { "type": "boolean", "title": "Arm in Away Mode" },
+            "type": { "type": "string", "enum": ["contact", "motion"], "title": "Sensor Type" },
+            "armHome": { "type": "boolean", "title": "Armed in Home Mode" },
+            "armAway": { "type": "boolean", "title": "Armed in Away Mode" },
             "monitorOff": { "type": "boolean", "title": "Monitor When Off" },
-            "entryDelay": {
-              "type": "number",
-              "title": "Entry Delay (seconds)",
-              "default": 0
-            }
+            "entryDelay": { "type": "number", "title": "Entry Delay (seconds)", "default": 0 }
           }
         }
       }
