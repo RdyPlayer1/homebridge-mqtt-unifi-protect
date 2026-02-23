@@ -3,14 +3,7 @@
   "version": "3.1.0",
   "description": "UniFi Protect MQTT Alarm Platform",
   "main": "index.js",
-  "keywords": [
-    "homebridge-plugin",
-    "homebridge-platform",
-    "mqtt",
-    "unifi",
-    "protect",
-    "alarm"
-  ],
+  "keywords": ["homebridge-plugin","homebridge-platform","mqtt","unifi","protect","alarm"],
   "dependencies": {
     "mqtt": "^4.3.7"
   },
@@ -26,4 +19,9 @@
     "node": ">=18.0.0",
     "homebridge": ">=1.6.0"
   }
+   "homebridge": {
+    "platforms": [
+      {
+        "platform": "MqttUnifiProtectPlatform"
+      }
 }
