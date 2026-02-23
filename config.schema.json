@@ -5,8 +5,22 @@
   "schema": {
     "type": "object",
     "properties": {
-      "mqttUrl": {
-        "title": "MQTT Broker URL",
+      "mqttHost": {
+        "title": "MQTT Broker Host",
+        "type": "string",
+        "default": "192.168.1.10"
+      },
+      "mqttPort": {
+        "title": "MQTT Broker Port",
+        "type": "number",
+        "default": 1883
+      },
+      "mqttUsername": {
+        "title": "MQTT Username",
+        "type": "string"
+      },
+      "mqttPassword": {
+        "title": "MQTT Password",
         "type": "string"
       },
       "exitDelay": {
