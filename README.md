@@ -10,6 +10,8 @@ A Homebridge dynamic platform plugin that creates a **HomeKit Security System** 
 
 This plugin relies on **Homebridge-unifi-protect** plugin for the way it publishes topics to MQTT so please install that first.
 
+⚠️ Some security scanners may report a DoS vulnerability in glob. This comes from dependencies used by Homebridge. It does not affect plugin safety.
+
 ## Features
 
 - 🏠 Home (Stay) arming  
