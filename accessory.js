@@ -1,65 +1,45 @@
-let Service, Characteristic;
-
 class Accessory {
-  constructor(platform, name, mac, config) {
+  constructor(platform, config) {
     this.platform = platform;
-    this.log = platform.log;
-    this.name = name;
-    this.mac = mac;
     this.config = config;
+    this.name = config.name;
 
-    Service = platform.api.hap.Service;
-    Characteristic = platform.api.hap.Characteristic;
+    const Service = platform.api.hap.Service;
+    const Characteristic = platform.api.hap.Characteristic;
 
-    this.service = new Service(config.type === 'motion' ? Service.MotionSensor : Service.ContactSensor, name);
+    this.service =
+      config.type === 'motion'
+        ? new Service.MotionSensor(this.name)
+        : new Service.ContactSensor(this.name);
 
-    this.isArmedHome = config.armHome || false;
-    this.isArmedAway = config.armAway || false;
-    this.monitorOff = config.monitorOff || false;
+    this.armHome = config.armHome;
+    this.armAway = config.armAway;
+    this.monitorOff = config.monitorOff;
     this.entryDelay = config.entryDelay || 0;
   }
 
   handleMessage(value) {
-    const systemState = this.getSystemState();
-    let shouldAlert = false;
+    const state = this.platform.getSystemState();
+    const active =
+      (state === 'home' && this.armHome) ||
+      (state === 'away' && this.armAway) ||
+      (state === 'off' && this.monitorOff);
 
-    if (systemState === 'home') shouldAlert = this.isArmedHome;
-    else if (systemState === 'away') shouldAlert = this.isArmedAway;
-    else if (systemState === 'off') shouldAlert = this.monitorOff;
+    if (!active) return;
+    if (value !== 'true') return;
 
-    if (shouldAlert) {
-      const HAP = Characteristic;
+    this.platform.log(`${this.name} triggered.`);
 
-      if (this.config.type === 'motion') {
-        this.service.setCharacteristic(HAP.MotionDetected, value === 'true');
-      } else {
-        this.service.setCharacteristic(HAP.ContactSensorState, value === 'true' ? HAP.ContactSensorState.CONTACT_NOT_DETECTED : HAP.ContactSensorState.CONTACT_DETECTED);
-      }
-
-      this.log(`${this.name} triggered!`);
-
-      // Trigger alarm after entry delay
+    if (this.entryDelay > 0) {
+      this.platform.log(`Entry delay (${this.entryDelay}s) for ${this.name}`);
       setTimeout(() => {
-        this.platform.triggerAlarm(HAP.SecuritySystemCurrentState.AWAY_ARM);
+        this.platform.triggerAlarm(this.name);
       }, this.entryDelay * 1000);
-    }
-  }
-
-  getSystemState() {
-    const alarm = this.platform.accessories.find(a => a.getService(Service.SecuritySystem));
-    if (!alarm) return 'off';
-
-    const service = alarm.getService(Service.SecuritySystem);
-    const HAP = Characteristic;
-    const state = service.getCharacteristic(HAP.SecuritySystemCurrentState).value;
-
-    switch(state) {
-      case HAP.SecuritySystemCurrentState.DISARMED: return 'off';
-      case HAP.SecuritySystemCurrentState.AWAY_ARM: return 'away';
-      case HAP.SecuritySystemCurrentState.STAY_ARM: return 'home';
-      default: return 'off';
+    } else {
+      this.platform.triggerAlarm(this.name);
     }
   }
 }
 
 module.exports = Accessory;
+
