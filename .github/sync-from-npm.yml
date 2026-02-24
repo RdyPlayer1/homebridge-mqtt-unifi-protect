@@ -1,0 +1,58 @@
+name: Sync from npm
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"   # Every 15 minutes
+  workflow_dispatch:        # Allow manual run
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Get npm version
+        id: npm_version
+        run: |
+          NPM_VERSION=$(npm view homebridge-mqtt-unifi-protect version)
+          echo "npm_version=$NPM_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Get repo version
+        id: repo_version
+        run: |
+          if [ -f package.json ]; then
+            REPO_VERSION=$(node -p "require('./package.json').version")
+          else
+            REPO_VERSION="none"
+          fi
+          echo "repo_version=$REPO_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Compare versions
+        id: compare
+        run: |
+          if [ "${{ steps.npm_version.outputs.npm_version }}" != "${{ steps.repo_version.outputs.repo_version }}" ]; then
+            echo "update_needed=true" >> $GITHUB_OUTPUT
+          else
+            echo "update_needed=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Download from npm
+        if: steps.compare.outputs.update_needed == 'true'
+        run: |
+          rm -rf *
+          npm pack homebridge-mqtt-unifi-protect
+          TAR_FILE=$(ls homebridge-mqtt-unifi-protect-*.tgz)
+          tar -xzf $TAR_FILE
+          mv package/* .
+          rm -rf package $TAR_FILE
+
+      - name: Commit and push
+        if: steps.compare.outputs.update_needed == 'true'
+        run: |
+          git config user.name "npm-sync-bot"
+          git config user.email "actions@github.com"
+          git add .
+          git commit -m "Sync from npm version ${{ steps.npm_version.outputs.npm_version }}"
+          git push
