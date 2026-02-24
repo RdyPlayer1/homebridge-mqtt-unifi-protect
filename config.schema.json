@@ -2,58 +2,117 @@
   "pluginAlias": "MqttUnifiProtectPlatform",
   "pluginType": "platform",
   "singular": true,
+  "headerDisplay": "MQTT UniFi Protect Alarm Configuration",
+  "footerDisplay": "Configure MQTT connection and sensor behavior.",
   "schema": {
     "type": "object",
     "properties": {
+
       "alarmName": {
         "title": "Alarm Accessory Name",
         "type": "string",
         "default": "Home Alarm"
       },
+
       "mqttHost": {
-        "title": "MQTT Broker Host",
+        "title": "MQTT Host",
         "type": "string",
-        "default": "192.168.1.10"
+        "placeholder": "192.168.1.10"
       },
+
       "mqttPort": {
-        "title": "MQTT Broker Port",
+        "title": "MQTT Port",
         "type": "number",
         "default": 1883
       },
+
       "mqttUsername": {
         "title": "MQTT Username",
         "type": "string"
       },
+
       "mqttPassword": {
         "title": "MQTT Password",
         "type": "string"
       },
+
       "exitDelay": {
-        "title": "Exit Delay (seconds)",
+        "title": "Exit Delay (seconds, 0 disables)",
         "type": "number",
-        "default": 30
+        "default": 0,
+        "minimum": 0
       },
+
       "alarmDuration": {
         "title": "Alarm Duration (seconds)",
         "type": "number",
-        "default": 120
+        "default": 120,
+        "minimum": 10
       },
+
       "devices": {
         "title": "Sensors",
         "type": "array",
         "items": {
           "type": "object",
+          "title": "Sensor",
           "properties": {
-            "name": { "type": "string", "title": "Device Name" },
-            "mac": { "type": "string", "title": "MAC Address (no colons)" },
-            "type": { "type": "string", "enum": ["contact", "motion"], "title": "Sensor Type" },
-            "armHome": { "type": "boolean", "title": "Armed in Home Mode" },
-            "armAway": { "type": "boolean", "title": "Armed in Away Mode" },
-            "monitorOff": { "type": "boolean", "title": "Monitor When Off" },
-            "entryDelay": { "type": "number", "title": "Entry Delay (seconds)", "default": 0 }
-          }
+
+            "name": {
+              "type": "string",
+              "title": "Device Name",
+              "placeholder": "Front Door"
+            },
+
+            "mac": {
+              "type": "string",
+              "title": "Mac Address (No Colons)",
+              "placeholder": "AABBCCDDEEFF",
+              "pattern": "^[A-Fa-f0-9:]{12,17}$",
+              "description": "12 hex characters. Colons will be removed automatically."
+            },
+
+            "type": {
+              "type": "string",
+              "title": "Sensor Type",
+              "enum": ["contact", "motion"],
+              "default": "contact"
+            },
+
+            "armHome": {
+              "type": "boolean",
+              "title": "Armed in Home Mode",
+              "default": false
+            },
+
+            "armAway": {
+              "type": "boolean",
+              "title": "Armed in Away Mode",
+              "default": true
+            },
+
+            "monitorOff": {
+              "type": "boolean",
+              "title": "Monitor When System Is Off",
+              "default": false
+            },
+
+            "entryDelay": {
+              "type": "number",
+              "title": "Entry Delay (seconds)",
+              "default": 0,
+              "minimum": 0,
+              "condition": {
+                "functionBody": "return model.armHome === true || model.armAway === true;"
+              }
+            }
+
+          },
+          "required": ["name", "mac", "type"]
         }
       }
-    }
+
+    },
+    "required": ["mqttHost"]
   }
 }
