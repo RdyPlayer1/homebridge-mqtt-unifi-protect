@@ -6,7 +6,9 @@
 ![mqtt](https://img.shields.io/badge/MQTT-supported-brightgreen)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
-A Homebridge dynamic platform plugin that creates a **HomeKit Security System** using MQTT events from UniFi Protect sensors.
+A Homebridge dynamic platform plugin that creates a **HomeKit Security System** using MQTT events from UniFi Protect sensors. 
+
+This plugin relies on Homebridge-unifi-protect plugin for the way it publishes topics to MQTT so please install that first.
 
 ## Features
 
