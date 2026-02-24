@@ -1,135 +1,191 @@
-const Accessory = require('./accessory');
+'use strict';
+
 const mqtt = require('mqtt');
 
 let Service, Characteristic;
 
 class MqttUnifiProtectPlatform {
+
   constructor(log, config, api) {
     this.log = log;
     this.config = config || {};
     this.api = api;
+    this.accessory = null;
+    this.client = null;
 
-    Service = api.hap.Service;
-    Characteristic = api.hap.Characteristic;
+    // Flattened config
+    this.alarmName = this.config.alarmName || 'Home Alarm';
+    this.exitDelay = Number(this.config.exitDelay || 0);
+    this.alarmDuration = Number(this.config.alarmDuration || 120);
+    this.devices = this.normalizeDevices(this.config.devices || []);
 
-    this.devices = config.devices || [];
-    this.exitDelay = config.exitDelay || 30;
-    this.alarmDuration = config.alarmDuration || 120;
-    this.alarmName = config.alarmName || 'Home Alarm';
-    this.accessories = [];
+    this.currentState = 3; // DISARMED
+    this.targetState = 3;  // DISARMED
 
-    this.mqttClient = null;
+    if (api) {
+      Service = api.hap.Service;
+      Characteristic = api.hap.Characteristic;
 
-    api.on('didFinishLaunching', () => {
-      this.setupAlarmAccessory();
-      this.setupDevices();
-      this.connectMqtt();
-      this.log('Platform finished launching.');
+      api.on('didFinishLaunching', () => {
+        this.log.info('Homebridge finished launching.');
+        this.setupAccessory();
+        this.setupMqtt();
+      });
+    }
+  }
+
+  // Normalize MAC addresses
+  normalizeDevices(devices) {
+    return devices.map(d => {
+      if (d.mac) {
+        d.mac = d.mac.replace(/[:\-]/g, '').toUpperCase();
+      }
+      return d;
     });
   }
 
   configureAccessory(accessory) {
-    this.accessories.push(accessory);
+    this.accessory = accessory;
+    this.log.info(`Loaded cached accessory: ${accessory.displayName}`);
   }
 
-  connectMqtt() {
-    if (!this.config.mqttHost) return;
+  setupAccessory() {
+    const uuid = this.api.hap.uuid.generate('mqtt-unifi-protect-alarm');
 
-    const options = {
-      host: this.config.mqttHost,
-      port: this.config.mqttPort || 1883,
-      username: this.config.mqttUsername,
-      password: this.config.mqttPassword,
-      reconnectPeriod: 5000
-    };
-
-    this.mqttClient = mqtt.connect(options);
-
-    this.mqttClient.on('connect', () => {
-      this.log(`MQTT broker connected: ${this.config.mqttHost}:${options.port}`);
-      // Subscribe to device topics if needed
-      this.devices.forEach(d => {
-        const topic = `unifi/protect/${d.mac}`;
-        this.mqttClient.subscribe(topic, err => {
-          if (!err) this.log(`Subscribed to ${topic}`);
-        });
-      });
-    });
-
-    this.mqttClient.on('message', (topic, message) => {
-      const msg = message.toString();
-      const mac = topic.split('/')[2];
-      const device = this.devices.find(d => d.mac === mac);
-      if (device && device.accessory) {
-        device.accessory.handleMessage(msg);
-      }
-    });
-
-    this.mqttClient.on('error', (err) => {
-      this.log('MQTT error:', err);
-    });
-
-    this.mqttClient.on('reconnect', () => {
-      this.log('Reconnecting to MQTT broker...');
-    });
-  }
-
-  publishMqtt(topic, message) {
-    if (this.mqttClient && this.mqttClient.connected) {
-      this.mqttClient.publish(topic, message.toString());
-      this.log(`MQTT published to ${topic}: ${message}`);
-    }
-  }
-
-  setupAlarmAccessory() {
-    const uuid = this.api.hap.uuid.generate('mqtt-unifi-alarm');
-    let alarmAccessory = this.accessories.find(a => a.UUID === uuid);
-
-    if (!alarmAccessory) {
-      alarmAccessory = new this.api.platformAccessory(this.alarmName, uuid);
-
-      const alarmService = alarmAccessory.addService(Service.SecuritySystem, this.alarmName);
-
-      alarmService.setCharacteristic(
-        Characteristic.SecuritySystemCurrentState,
-        Characteristic.SecuritySystemCurrentState.DISARMED
-      );
-      alarmService.setCharacteristic(
-        Characteristic.SecuritySystemTargetState,
-        Characteristic.SecuritySystemTargetState.DISARM
-      );
-
+    if (!this.accessory) {
+      this.accessory = new this.api.platformAccessory(this.alarmName, uuid);
       this.api.registerPlatformAccessories(
         'homebridge-mqtt-unifi-protect',
         'MqttUnifiProtectPlatform',
-        [alarmAccessory]
+        [this.accessory]
       );
-
-      this.accessories.push(alarmAccessory);
-      this.log(`Alarm accessory "${this.alarmName}" created.`);
+      this.log.info('Created new alarm accessory.');
     }
+
+    const service =
+      this.accessory.getService(Service.SecuritySystem) ||
+      this.accessory.addService(Service.SecuritySystem);
+
+    service.setCharacteristic(Characteristic.SecuritySystemCurrentState, this.currentState);
+    service.setCharacteristic(Characteristic.SecuritySystemTargetState, this.targetState);
+
+    service.getCharacteristic(Characteristic.SecuritySystemTargetState)
+      .onSet(this.handleSetTargetState.bind(this));
   }
 
-  setupDevices() {
-    this.devices.forEach(d => {
-      if (!d.accessory) {
-        d.accessory = new Accessory(this, d.name, d.mac, d);
-      }
+  setupMqtt() {
+    if (!this.config.mqttHost) {
+      this.log.error('MQTT Host not configured.');
+      return;
+    }
+
+    const url = `mqtt://${this.config.mqttHost}:${this.config.mqttPort || 1883}`;
+    this.client = mqtt.connect(url, {
+      username: this.config.mqttUsername,
+      password: this.config.mqttPassword
+    });
+
+    this.client.on('connect', () => {
+      this.log.info('✅ MQTT broker connected successfully.');
+      this.client.subscribe('#');
+    });
+
+    this.client.on('error', err => {
+      this.log.error('MQTT Error:', err.message);
+    });
+
+    this.client.on('message', (topic, message) => {
+      this.handleMqttMessage(topic, message.toString());
     });
   }
 
-  triggerAlarm(state) {
-    const alarm = this.accessories.find(a => a.getService(Service.SecuritySystem));
-    if (!alarm) return;
+  handleSetTargetState(value) {
+    this.targetState = value;
 
-    const service = alarm.getService(Service.SecuritySystem);
-    const HAP = Characteristic;
+    const arming =
+      value === Characteristic.SecuritySystemTargetState.AWAY_ARM ||
+      value === Characteristic.SecuritySystemTargetState.STAY_ARM;
 
-    service.setCharacteristic(HAP.SecuritySystemCurrentState, state);
-    service.setCharacteristic(HAP.SecuritySystemTargetState, state);
+    if (arming && this.exitDelay > 0) {
+      this.log.info(`Exit delay started: ${this.exitDelay} seconds`);
 
-    // Publish to MQTT
-    this.publishMqtt('unifi/protect/alarm/state', state.toString());
+      setTimeout(() => {
+        this.currentState = value;
+        this.updateCurrentState();
+        this.log.info('System armed.');
+      }, this.exitDelay * 1000);
+
+    } else {
+      this.currentState = value;
+      this.updateCurrentState();
+      this.log.info('System state changed immediately.');
+    }
+  }
+
+  updateCurrentState() {
+    if (!this.accessory) return;
+
+    const service = this.accessory.getService(Service.SecuritySystem);
+    service.updateCharacteristic(Characteristic.SecuritySystemCurrentState, this.currentState);
+  }
+
+  handleMqttMessage(topic, payload) {
+    const device = this.devices.find(d =>
+      topic.toUpperCase().includes(d.mac)
+    );
+
+    if (!device) return;
+
+    const triggered =
+      payload === 'true' ||
+      payload === '1' ||
+      payload.toLowerCase() === 'open' ||
+      payload.toLowerCase() === 'motion';
+
+    if (!triggered) return;
+    if (!this.isSensorArmed(device)) return;
+
+    this.log.warn(`🚨 Alarm triggered by: ${device.name}`);
+
+    if (device.entryDelay > 0) {
+      this.log.info(`Entry delay started for ${device.name}: ${device.entryDelay}s`);
+      setTimeout(() => {
+        if (this.isSystemStillArmed()) this.triggerAlarm();
+      }, device.entryDelay * 1000);
+    } else {
+      this.triggerAlarm();
+    }
+  }
+
+  isSystemStillArmed() {
+    return (
+      this.currentState === Characteristic.SecuritySystemCurrentState.AWAY_ARM ||
+      this.currentState === Characteristic.SecuritySystemCurrentState.STAY_ARM
+    );
+  }
+
+  triggerAlarm() {
+    this.currentState = Characteristic.SecuritySystemCurrentState.ALARM_TRIGGERED;
+    this.updateCurrentState();
+
+    setTimeout(() => {
+      this.currentState = this.targetState;
+      this.updateCurrentState();
+      this.log.info('Alarm reset.');
+    }, this.alarmDuration * 1000);
+  }
+
+  isSensorArmed(device) {
+    if (this.currentState === Characteristic.SecuritySystemCurrentState.DISARMED) {
+      return device.monitorOff === true;
+    }
+    if (this.currentState === Characteristic.SecuritySystemCurrentState.STAY_ARM) {
+      return device.armHome === true;
+    }
+    if (this.currentState === Characteristic.SecuritySystemCurrentState.AWAY_ARM) {
+      return device.armAway === true;
+    }
+    return false;
   }
 }
 
