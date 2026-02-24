@@ -1,27 +1,22 @@
 {
   "name": "homebridge-mqtt-unifi-protect",
-  "version": "3.1.0",
-  "description": "UniFi Protect MQTT Alarm Platform",
+  "version": "3.3.0",
   "main": "index.js",
-  "keywords": ["homebridge-plugin","homebridge-platform","mqtt","unifi","protect","alarm"],
+  "keywords": [
+    "homebridge-plugin",
+    "homebridge-platform"
+  ],
+  "engines": {
+    "homebridge": ">=1.5.0"
+  },
   "dependencies": {
     "mqtt": "^4.3.7"
   },
-  "homepage": "https://github.com/RdyPlayer1/homebridge-mqtt-unifi-protect",
-  "bugs": {
-    "url": "https://github.com/RdyPlayer1/homebridge-mqtt-unifi-protect/issues"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/RdyPlayer1/homebridge-mqtt-unifi-protect.git"
-  },
-  "engines": {
-    "node": ">=18.0.0",
-    "homebridge": ">=1.6.0"
-  }
-   "homebridge": {
+  "homebridge": {
     "platforms": [
       {
         "platform": "MqttUnifiProtectPlatform"
       }
+    ]
+  }
 }
