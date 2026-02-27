@@ -115,50 +115,36 @@ module.exports = class MqttUnifiProtectPlatform {
 
   /* ---------------- ZONES ---------------- */
 
-  setupZones() {
-    for (const zone of this.config.devices || []) {
-      const mac = zone.mac.replace(/:/g, '').toUpperCase();
-      const uuid = this.api.hap.uuid.generate(`zone:${mac}`);
+// initialize context
+service.context = service.context || {};
+service.context.zone = {
+  name: zone.name,
+  mac,
+  type: zone.type,
+  armHome: !!zone.armHome,
+  armAway: !!zone.armAway,
+  entryDelay: Math.max(0, Number(zone.entryDelay ?? 0)),
+};
 
-      let serviceType =
-                 zone.type === 'motion'
-           ? this.Service.MotionSensor
-           : this.Service.ContactSensor;
- 
-       const service =
-         this.alarmAccessory.getService(uuid) ||
-         this.alarmAccessory.addService(serviceType, zone.name, uuid);
- 
-       // initialize context
-       service.context = service.context || {};
-       service.context.zone = {
-         name: zone.name,
-         mac,
-         type: zone.type,
-         armHome: !!zone.armHome,
-         armAway: !!zone.armAway,
-         entryDelay: Math.max(0, Number(zone.entryDelay ?? 0)),
-       };
- 
-       // Initialize HomeKit state (false = not triggered)
-       if (serviceType === this.Service.MotionSensor) {
-         service.getCharacteristic(this.Characteristic.MotionDetected).updateValue(false);
-       } else {
-         service
-           .getCharacteristic(this.Characteristic.ContactSensorState)
-          .updateValue(this.Characteristic.ContactSensorState.CONTACT_DETECTED);
-       }
- 
-      // Keep the service name in sync with config.
-      // NOTE: SerialNumber is only valid on AccessoryInformation, not Contact/Motion services.
-       service.displayName = zone.name;
-      service
-        .getCharacteristic(this.Characteristic.Name)
-        .updateValue(zone.name);
-     }
-   }
- 
-   /* ---------------- MQTT ---------------- */
+// Initialize HomeKit state
+if (serviceType === this.Service.MotionSensor) {
+  service
+    .getCharacteristic(this.Characteristic.MotionDetected)
+    .updateValue(false);
+} else {
+  service
+    .getCharacteristic(this.Characteristic.ContactSensorState)
+    .updateValue(this.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED);
+}
+
+// ✅ Correct way to set the service name
+const nameChar =
+  service.getCharacteristic(this.Characteristic.Name) ||
+  service.addCharacteristic(this.Characteristic.Name);
+
+nameChar.updateValue(zone.name);
+  
+/* ---------------- MQTT ---------------- */
  
    connectMQTT() {
      if (!this.config.mqttHost) return;
