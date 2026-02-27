@@ -42,4 +42,3 @@ class Accessory {
 }
 
 module.exports = Accessory;
-
