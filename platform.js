@@ -121,174 +121,144 @@ module.exports = class MqttUnifiProtectPlatform {
       const uuid = this.api.hap.uuid.generate(`zone:${mac}`);
 
       let serviceType =
-        zone.type === 'motion'
-          ? this.Service.MotionSensor
-          : this.Service.ContactSensor;
-
-      const service =
-        this.alarmAccessory.getService(uuid) ||
-        this.alarmAccessory.addService(serviceType, zone.name, uuid);
-
-      // initialize context
-      service.context = service.context || {};
-      service.context.zone = {
-        name: zone.name,
-        mac,
-        type: zone.type,
-        armHome: !!zone.armHome,
-        armAway: !!zone.armAway,
-        entryDelay: Math.max(0, Number(zone.entryDelay ?? 0)),
-      };
-
-      // Initialize HomeKit state (false = not triggered)
-      if (serviceType === this.Service.MotionSensor) {
-        service.getCharacteristic(this.Characteristic.MotionDetected).updateValue(false);
-      } else {
-        service
-          .getCharacteristic(this.Characteristic.ContactSensorState)
+                 zone.type === 'motion'
+           ? this.Service.MotionSensor
+           : this.Service.ContactSensor;
+ 
+       const service =
+         this.alarmAccessory.getService(uuid) ||
+         this.alarmAccessory.addService(serviceType, zone.name, uuid);
+ 
+       // initialize context
+       service.context = service.context || {};
+       service.context.zone = {
+         name: zone.name,
+         mac,
+         type: zone.type,
+         armHome: !!zone.armHome,
+         armAway: !!zone.armAway,
+         entryDelay: Math.max(0, Number(zone.entryDelay ?? 0)),
+       };
+ 
+       // Initialize HomeKit state (false = not triggered)
+       if (serviceType === this.Service.MotionSensor) {
+         service.getCharacteristic(this.Characteristic.MotionDetected).updateValue(false);
+       } else {
+         service
+           .getCharacteristic(this.Characteristic.ContactSensorState)
           .updateValue(this.Characteristic.ContactSensorState.CONTACT_DETECTED);
-      }
-
-       // Keep the service name in sync with config.
-      service.displayName = zone.name;
+       }
+ 
+      // Keep the service name in sync with config.
+      // NOTE: SerialNumber is only valid on AccessoryInformation, not Contact/Motion services.
+       service.displayName = zone.name;
       service
         .getCharacteristic(this.Characteristic.Name)
         .updateValue(zone.name);
-    }
-  }
-
-  /* ---------------- MQTT ---------------- */
-
-  connectMQTT() {
-    if (!this.config.mqttHost) return;
-
-    this.mqttClient = mqtt.connect({
-      host: this.config.mqttHost,
-      port: this.config.mqttPort || 1883,
-      username: this.config.mqttUsername,
-      password: this.config.mqttPassword,
-      reconnectPeriod: 0,
-    });
-
-    this.mqttClient.on('connect', () => {
-      this.log.info('MQTT connected, subscribing to each zone...');
-      for (const zone of this.config.devices || []) {
-        const mac = zone.mac.replace(/:/g, '').toUpperCase();
-        const topic = `unifi/protect/${mac}`;
-        this.mqttClient.subscribe(topic, {}, (err) => {
-          if (err) this.log.error(`MQTT subscribe failed for ${topic}`);
-          else this.log.info(`Subscribed to ${topic}`);
-        });
-      }
-    });
-
-    this.mqttClient.on('error', (err) => {
-      this.log.error(`MQTT error: ${err.message}, retrying in 60s`);
-      setTimeout(() => this.connectMQTT(), 60_000);
-    });
-
-    this.mqttClient.on('message', (topic, msg) => this.handleMQTT(topic, msg));
-  }
-
-  handleMQTT(topic, msg) {
+     }
+   }
+ 
+   /* ---------------- MQTT ---------------- */
+ 
+   connectMQTT() {
+     if (!this.config.mqttHost) return;
+ 
+     this.mqttClient = mqtt.connect({
+       host: this.config.mqttHost,
+       port: this.config.mqttPort || 1883,
+       username: this.config.mqttUsername,
+       password: this.config.mqttPassword,
+       reconnectPeriod: 0,
+     });
+ 
+     this.mqttClient.on('connect', () => {
+      const topic = '#';
+      this.log.info(`MQTT connected, subscribing to ${topic}`);
+      this.mqttClient.subscribe(topic, {}, (err) => {
+        if (err) this.log.error(`MQTT subscribe failed for ${topic}`);
+        else this.log.info(`Subscribed to ${topic}`);
+      });
+     });
+ 
+     this.mqttClient.on('error', (err) => {
+       this.log.error(`MQTT error: ${err.message}, retrying in 60s`);
+       setTimeout(() => this.connectMQTT(), 60_000);
+     });
+ 
+     this.mqttClient.on('message', (topic, msg) => this.handleMQTT(topic, msg));
+   }
+ 
+   handleMQTT(topic, msg) {
     const rawMessage = msg.toString().trim();
-    let payload = rawMessage;
+ 
+     for (const service of this.alarmAccessory.services) {
+       const z = service.context?.zone;
+       if (!z) continue;
+      if (!this.topicMatchesZone(topic, z.mac)) continue;
 
-    try {
-      payload = JSON.parse(rawMessage);
-    } catch {
-       // Non-JSON payloads are also supported (e.g. "open", "motion", "true").    
-    }
+      const normalized = rawMessage.toLowerCase();
+      if (normalized !== 'true' && normalized !== 'false') {
+        this.log.error(
+          `Invalid MQTT payload for topic ${topic}: "${rawMessage}". Expected "true" or "false".`
+        );
+        return;
+      }
+ 
+      const triggered = normalized === 'true';
 
-    for (const service of this.alarmAccessory.services) {
-      const z = service.context?.zone;
-      if (!z) continue;
-      if (topic !== `unifi/protect/${z.mac}`) continue;
-
-      // Mirror MQTT state
-      let triggered = false;
       if (z.type === 'motion') {
-        const motionValue = typeof payload === 'object' && payload !== null ? payload.motion : payload;
-        const motionDetected = this.toBooleanState(motionValue, ['motion']);
-        if (motionDetected === null) return;
-        triggered = motionDetected;
-        service.getCharacteristic(this.Characteristic.MotionDetected).updateValue(motionDetected);
+         service.getCharacteristic(this.Characteristic.MotionDetected).updateValue(triggered);
       } else if (z.type === 'contact') {
-        const contactValue = typeof payload === 'object' && payload !== null ? payload.contact : payload;
-        const isOpen = this.toBooleanState(contactValue, ['open']);
-        if (isOpen === null) return;
-        triggered = isOpen;
-        const contactState = isOpen
+         const contactState = triggered
           ? this.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED
           : this.Characteristic.ContactSensorState.CONTACT_DETECTED;
-        service.getCharacteristic(this.Characteristic.ContactSensorState).updateValue(contactState);
-      }
+         service.getCharacteristic(this.Characteristic.ContactSensorState).updateValue(contactState);
+       }
+ 
+       if (triggered) this.triggerAlarm(z);
+       return; // stop after first match
+     }
+   }
+ 
 
-      if (triggered) this.triggerAlarm(z);
-      return; // stop after first match
-    }
+  topicMatchesZone(topic, mac) {
+    if (typeof topic !== 'string') return false;
+
+    const normalizedTopic = topic.toUpperCase();
+    return normalizedTopic.includes(mac);
   }
 
-    toBooleanState(value, truthyWords = []) {
-    if (typeof value === 'boolean') return value;
-    if (typeof value === 'number') return value === 1;
-    if (typeof value !== 'string') return null;
-
-    const normalized = value.trim().toLowerCase();
-    if (normalized === 'true' || normalized === '1') return true;
-    if (normalized === 'false' || normalized === '0') return false;
-
-    if (truthyWords.includes(normalized)) return true;
-    return null;
-  }
-
-  triggerAlarm(zone) {
-    const C = this.Characteristic;
-
-    const armed =
-      (this.state.currentState === C.SecuritySystemCurrentState.AWAY_ARM &&
-        zone.armAway) ||
-      (this.state.currentState === C.SecuritySystemCurrentState.STAY_ARM &&
-        zone.armHome);
-
-    if (!armed) return;
-
-    const fire = () => {
-      this.log.warn(`🚨 Alarm triggered by ${zone.name}`);
-      this.state.currentState = C.SecuritySystemCurrentState.ALARM_TRIGGERED;
-      this.updateState();
-
-      this.alarmTimer = setTimeout(() => {
-        this.setTargetState(this.state.targetState);
-      }, this.alarmDuration * 1000);
-    };
-
-    if (zone.entryDelay === 0) fire();
-    else setTimeout(fire, zone.entryDelay * 1000);
-  }
-
-  /* ---------------- STATE ---------------- */
-
-  updateState() {
-    this.alarmService.updateCharacteristic(
-      this.Characteristic.SecuritySystemCurrentState,
-      this.state.currentState
-    );
-    this.saveState();
-  }
-
-  saveState() {
-    try {
-      fs.writeFileSync(this.stateFile, JSON.stringify(this.state));
-    } catch {}
-  }
-
-  loadState() {
-    try {
-      if (fs.existsSync(this.stateFile)) {
-        return JSON.parse(fs.readFileSync(this.stateFile));
-      }
-    } catch {}
-    return {};
-  }
-};
+   triggerAlarm(zone) {
+     const C = this.Characteristic;
+ 
+     const armed =
+       (this.state.currentState === C.SecuritySystemCurrentState.AWAY_ARM &&
+         zone.armAway) ||
+      ((this.state.currentState === C.SecuritySystemCurrentState.STAY_ARM ||
+        this.state.currentState === C.SecuritySystemCurrentState.NIGHT_ARM) &&
+         zone.armHome);
+ 
+     if (!armed) return;
+ 
+     const fire = () => {
+       this.log.warn(`🚨 Alarm triggered by ${zone.name}`);
+       this.state.currentState = C.SecuritySystemCurrentState.ALARM_TRIGGERED;
+       this.updateState();
+ 
+       this.alarmTimer = setTimeout(() => {
+         this.setTargetState(this.state.targetState);
+       }, this.alarmDuration * 1000);
+     };
+ 
+     if (zone.entryDelay === 0) fire();
+     else setTimeout(fire, zone.entryDelay * 1000);
+   }
+ 
+   /* ---------------- STATE ---------------- */
+ 
+   updateState() {
+     this.alarmService.updateCharacteristic(
+       this.Characteristic.SecuritySystemCurrentState,
+       this.state.currentState
+     );
+     
