@@ -146,13 +146,14 @@ module.exports = class MqttUnifiProtectPlatform {
       } else {
         service
           .getCharacteristic(this.Characteristic.ContactSensorState)
-          .updateValue(this.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED);
+          .updateValue(this.Characteristic.ContactSensorState.CONTACT_DETECTED);
       }
 
-      // Set proper name and serial number
+       // Keep the service name in sync with config.
       service.displayName = zone.name;
-      const serialChar = service.getCharacteristic(this.Characteristic.SerialNumber);
-      if (serialChar) serialChar.updateValue(mac);
+      service
+        .getCharacteristic(this.Characteristic.Name)
+        .updateValue(zone.name);
     }
   }
 
@@ -190,11 +191,13 @@ module.exports = class MqttUnifiProtectPlatform {
   }
 
   handleMQTT(topic, msg) {
-    let payload;
+    const rawMessage = msg.toString().trim();
+    let payload = rawMessage;
+
     try {
-      payload = JSON.parse(msg.toString());
+      payload = JSON.parse(rawMessage);
     } catch {
-      return;
+       // Non-JSON payloads are also supported (e.g. "open", "motion", "true").    
     }
 
     for (const service of this.alarmAccessory.services) {
@@ -204,20 +207,39 @@ module.exports = class MqttUnifiProtectPlatform {
 
       // Mirror MQTT state
       let triggered = false;
-      if (z.type === 'motion' && typeof payload.motion === 'boolean') {
-        triggered = payload.motion;
-        service.getCharacteristic(this.Characteristic.MotionDetected).updateValue(triggered);
-      } else if (z.type === 'contact' && typeof payload.contact === 'boolean') {
-        triggered = payload.contact;
-        const contactState = triggered
-          ? this.Characteristic.ContactSensorState.CONTACT_DETECTED
-          : this.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED;
+      if (z.type === 'motion') {
+        const motionValue = typeof payload === 'object' && payload !== null ? payload.motion : payload;
+        const motionDetected = this.toBooleanState(motionValue, ['motion']);
+        if (motionDetected === null) return;
+        triggered = motionDetected;
+        service.getCharacteristic(this.Characteristic.MotionDetected).updateValue(motionDetected);
+      } else if (z.type === 'contact') {
+        const contactValue = typeof payload === 'object' && payload !== null ? payload.contact : payload;
+        const isOpen = this.toBooleanState(contactValue, ['open']);
+        if (isOpen === null) return;
+        triggered = isOpen;
+        const contactState = isOpen
+          ? this.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED
+          : this.Characteristic.ContactSensorState.CONTACT_DETECTED;
         service.getCharacteristic(this.Characteristic.ContactSensorState).updateValue(contactState);
       }
 
       if (triggered) this.triggerAlarm(z);
       return; // stop after first match
     }
+  }
+
+    toBooleanState(value, truthyWords = []) {
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'number') return value === 1;
+    if (typeof value !== 'string') return null;
+
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'true' || normalized === '1') return true;
+    if (normalized === 'false' || normalized === '0') return false;
+
+    if (truthyWords.includes(normalized)) return true;
+    return null;
   }
 
   triggerAlarm(zone) {
