@@ -3,8 +3,8 @@ name: Publish to NPM
 on:
   push:
     tags:
-      - 'v*.*.*'   # triggers on semver tags, e.g., v1.2.3
-  workflow_dispatch:  # allows manual run
+      - 'v*.*.*'      # triggers on semver tags, e.g., v1.2.3
+  workflow_dispatch:   # allows manual run
 
 jobs:
   publish:
@@ -16,12 +16,11 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: '20'           # set Node version as needed
-          cache: 'npm'
+          node-version: '20'
           registry-url: 'https://registry.npmjs.org/'
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Install dependencies & generate package-lock.json
+        run: npm install
 
       - name: Verify package version
         run: npm version
@@ -29,5 +28,4 @@ jobs:
       - name: Publish to npm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          npm publish --access public
+        run: npm publish --access public
