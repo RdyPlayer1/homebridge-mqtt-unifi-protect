@@ -69,7 +69,7 @@
               "title": "Mac Address (No Colons)",
               "placeholder": "AABBCCDDEEFF",
               "pattern": "^[A-Fa-f0-9:]{12,17}$",
-              "description": "12 hex characters. Colons will be removed automatically."
+              "description": "12 hex characters. Colons are optional and will be removed automatically. Uppercase enforced."
             },
 
             "type": {
@@ -91,20 +91,12 @@
               "default": true
             },
 
-            "monitorOff": {
-              "type": "boolean",
-              "title": "Monitor When System Is Off",
-              "default": false
-            },
-
             "entryDelay": {
               "type": "number",
               "title": "Entry Delay (seconds)",
               "default": 0,
               "minimum": 0,
-              "condition": {
-                "functionBody": "return model.armHome === true || model.armAway === true;"
-              }
+              "description": "Delay before alarm triggers when this sensor is activated."
             }
 
           },
