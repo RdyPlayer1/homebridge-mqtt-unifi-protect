@@ -231,12 +231,11 @@ module.exports = class MqttUnifiProtectPlatform {
    triggerAlarm(zone) {
      const C = this.Characteristic;
  
-     const armed =
-       (this.state.currentState === C.SecuritySystemCurrentState.AWAY_ARM &&
-         zone.armAway) ||
-      ((this.state.currentState === C.SecuritySystemCurrentState.STAY_ARM ||
-        this.state.currentState === C.SecuritySystemCurrentState.NIGHT_ARM) &&
-         zone.armHome);
+const armed =
+  (this.state.targetState === C.SecuritySystemTargetState.AWAY_ARM && zone.armAway) ||
+  ((this.state.targetState === C.SecuritySystemTargetState.STAY_ARM ||
+    this.state.targetState === C.SecuritySystemTargetState.NIGHT_ARM) &&
+    zone.armHome);
  
      if (!armed) return;
  
