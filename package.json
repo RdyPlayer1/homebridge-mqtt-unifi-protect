@@ -1,6 +1,6 @@
 {
   "name": "homebridge-mqtt-unifi-protect",
-  "version": "3.3.6",
+  "version": "3.4.16",
   "description": "Homebridge plugin that creates a HomeKit Security System using MQTT events from UniFi Protect sensors.",
   "main": "index.js",
   "keywords": [
