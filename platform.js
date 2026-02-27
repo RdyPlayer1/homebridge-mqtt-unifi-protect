@@ -254,11 +254,32 @@ module.exports = class MqttUnifiProtectPlatform {
      else setTimeout(fire, zone.entryDelay * 1000);
    }
  
-   /* ---------------- STATE ---------------- */
- 
-   updateState() {
-     this.alarmService.updateCharacteristic(
-       this.Characteristic.SecuritySystemCurrentState,
-       this.state.currentState
-     );
-     
+    /* ---------------- STATE ---------------- */
+
+  updateState() {
+    this.alarmService.updateCharacteristic(
+      this.Characteristic.SecuritySystemCurrentState,
+      this.state.currentState
+    );
+    this.saveState();
+  }
+
+  saveState() {
+    try {
+      fs.writeFileSync(this.stateFile, JSON.stringify(this.state));
+    } catch (err) {
+      this.log.error('Failed to save alarm state:', err);
+    }
+  }
+
+  loadState() {
+    try {
+      if (fs.existsSync(this.stateFile)) {
+        return JSON.parse(fs.readFileSync(this.stateFile));
+      }
+    } catch (err) {
+      this.log.error('Failed to load alarm state:', err);
+    }
+    return {};
+  }
+};
