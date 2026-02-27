@@ -6,50 +6,50 @@ on:
       - 'v*.*.*'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   publish:
     runs-on: ubuntu-latest
 
     steps:
-      # 1️⃣ Checkout repository
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      # 2️⃣ Setup Node.js
       - name: Setup Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org/'
 
-      # 3️⃣ Ensure package-lock.json exists
-      - name: Ensure package-lock.json
+      # -------------------------------
+      # Ensure lockfile exists
+      # -------------------------------
+      - name: Generate package-lock.json if missing
         run: |
           if [ ! -f package-lock.json ]; then
-            echo "{}" > package-lock.json
             npm install --package-lock-only
           fi
 
-      # 4️⃣ Install dependencies
-      - name: Install dependencies
-        run: npm install
-
-      # 5️⃣ Commit package-lock.json if created/changed
-      - name: Commit package-lock.json
+      # -------------------------------
+      # Commit lockfile (manual runs ONLY)
+      # -------------------------------
+      - name: Commit package-lock.json (manual only)
+        if: github.event_name == 'workflow_dispatch'
         run: |
+          git checkout main
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add package-lock.json
-          git diff --cached --quiet || git commit -m "chore: update package-lock.json"
-          git push origin HEAD || echo "No changes to push"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          git diff --cached --quiet || git commit -m "chore: add/update package-lock.json"
+          git push origin main
 
-      # 6️⃣ Show npm package version
-      - name: Verify package version
-        run: npm version
-
-      # 7️⃣ Publish to NPM
+      # -------------------------------
+      # Publish to NPM
+      # -------------------------------
       - name: Publish to NPM
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
