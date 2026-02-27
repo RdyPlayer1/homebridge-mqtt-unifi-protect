@@ -1,0 +1,39 @@
+name: Publish Beta to NPM
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish-beta:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org/'
+          cache: 'none'
+
+      - name: Verify package version
+        run: |
+          node -e "
+          const v = require('./package.json').version;
+          if (!v.includes('beta')) {
+            console.error('❌ Version must include beta (e.g. 3.5.0-beta.0)');
+            process.exit(1);
+          }
+          console.log('✅ Publishing beta version:', v);
+          "
+
+      - name: Publish beta to NPM
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          npm publish --access public --tag beta --ignore-scripts
