@@ -113,20 +113,18 @@ It matches devices when their MAC address appears in the topic.
 Accepted trigger payloads:
 
 - true  
-- 1  
-- open  
-- motion  
+- false
 
 Example:
 
 Topic:
 ```
-unifi/AABBCCDDEEFF/state
+unifi//protect/AABBCCDDEEFF/motion
 ```
 
 Payload:
 ```
-open
+true
 ```
 
 ---
