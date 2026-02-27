@@ -11,19 +11,23 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
+      # 1️⃣ Checkout repo
+      - name: Checkout repository
         uses: actions/checkout@v3
 
+      # 2️⃣ Setup Node.js
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org/'
 
-      - name: Install dependencies & generate package-lock.json
+      # 3️⃣ Install dependencies (creates package-lock.json if missing)
+      - name: Install dependencies
         run: npm install
 
-      - name: Commit package-lock.json if new
+      # 4️⃣ Ensure package-lock.json exists and commit if changed
+      - name: Commit package-lock.json if created/changed
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -33,9 +37,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # 5️⃣ Show npm package version
       - name: Verify package version
         run: npm version
 
+      # 6️⃣ Publish to NPM
       - name: Publish to NPM
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
