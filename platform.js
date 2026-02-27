@@ -188,38 +188,38 @@ module.exports = class MqttUnifiProtectPlatform {
      this.mqttClient.on('message', (topic, msg) => this.handleMQTT(topic, msg));
    }
  
-   handleMQTT(topic, msg) {
-    const rawMessage = msg.toString().trim();
- 
-     for (const service of this.alarmAccessory.services) {
-       const z = service.context?.zone;
-       if (!z) continue;
-      if (!this.topicMatchesZone(topic, z.mac)) continue;
+ handleMQTT(topic, msg) {
+  const rawMessage = msg.toString().trim();
 
-      const normalized = rawMessage.toLowerCase();
-      if (normalized !== 'true' && normalized !== 'false') {
-        this.log.error(
-          `Invalid MQTT payload for topic ${topic}: "${rawMessage}". Expected "true" or "false".`
-        );
-        return;
-      }
- 
-      const triggered = normalized === 'true';
+  for (const service of this.alarmAccessory.services) {
+    const z = service.context?.zone;
+    if (!z) continue;
+    if (!this.topicMatchesZone(topic, z.mac)) continue;
 
-      if (z.type === 'motion') {
-         service.getCharacteristic(this.Characteristic.MotionDetected).updateValue(triggered);
-      } else if (z.type === 'contact') {
-         const contactState = triggered
-          ? this.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED
-          : this.Characteristic.ContactSensorState.CONTACT_DETECTED;
-         service.getCharacteristic(this.Characteristic.ContactSensorState).updateValue(contactState);
-       }
- 
-       if (triggered) this.triggerAlarm(z);
-       return; // stop after first match
-     }
-   }
- 
+    const normalized = rawMessage.toLowerCase();
+
+    let triggered;
+    if (normalized === 'true') triggered = true;
+    else if (normalized === 'false') triggered = false;
+    else continue; // ignore anything else
+
+    // Update HomeKit service state
+    if (z.type === 'motion') {
+      service.getCharacteristic(this.Characteristic.MotionDetected).updateValue(triggered);
+    } else if (z.type === 'contact') {
+      const contactState = triggered
+        ? this.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED
+        : this.Characteristic.ContactSensorState.CONTACT_DETECTED;
+      service.getCharacteristic(this.Characteristic.ContactSensorState).updateValue(contactState);
+    }
+
+    // Only trigger alarm if true
+    if (triggered) this.triggerAlarm(z);
+
+    return; // stop after first match
+  }
+}
+  
 
   topicMatchesZone(topic, mac) {
     if (typeof topic !== 'string') return false;
