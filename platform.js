@@ -1,192 +1,272 @@
 'use strict';
 
 const mqtt = require('mqtt');
+const fs = require('fs');
+const path = require('path');
 
-let Service, Characteristic;
-
-class MqttUnifiProtectPlatform {
-
+module.exports = class MqttUnifiProtectPlatform {
   constructor(log, config, api) {
     this.log = log;
-    this.config = config || {};
     this.api = api;
-    this.accessory = null;
-    this.client = null;
+    this.config = config || {};
 
-    // Flattened config
-    this.alarmName = this.config.alarmName || 'Home Alarm';
-    this.exitDelay = Number(this.config.exitDelay || 0);
-    this.alarmDuration = Number(this.config.alarmDuration || 120);
-    this.devices = this.normalizeDevices(this.config.devices || []);
+    this.Service = api.hap.Service;
+    this.Characteristic = api.hap.Characteristic;
 
-    this.currentState = 3; // DISARMED
-    this.targetState = 3;  // DISARMED
+    this.ALARM_UUID = api.hap.uuid.generate(
+      'homebridge-mqtt-unifi-protect:alarm:v1'
+    );
 
-    if (api) {
-      Service = api.hap.Service;
-      Characteristic = api.hap.Characteristic;
+    this.stateFile = path.join(
+      api.user.storagePath(),
+      'homebridge-mqtt-unifi-protect-state.json'
+    );
 
-      api.on('didFinishLaunching', () => {
-        this.log.info('Homebridge finished launching.');
-        this.setupAccessory();
-        this.setupMqtt();
-      });
-    }
-  }
+    this.state = {
+      targetState: this.Characteristic.SecuritySystemTargetState.DISARM,
+      currentState: this.Characteristic.SecuritySystemCurrentState.DISARMED,
+    };
+    Object.assign(this.state, this.loadState());
 
-  // Normalize MAC addresses
-  normalizeDevices(devices) {
-    return devices.map(d => {
-      if (d.mac) {
-        d.mac = d.mac.replace(/[:\-]/g, '').toUpperCase();
-      }
-      return d;
-    });
+    this.exitDelay = Math.max(0, Number(this.config.exitDelay ?? 0));
+    this.alarmDuration = Math.max(1, Number(this.config.alarmDuration ?? 1));
+
+    this.exitTimer = null;
+    this.alarmTimer = null;
+
+    this.alarmAccessory = null;
+    this.mqttClient = null;
+
+    api.on('didFinishLaunching', () => this.didFinishLaunching());
   }
 
   configureAccessory(accessory) {
-    this.accessory = accessory;
-    this.log.info(`Loaded cached accessory: ${accessory.displayName}`);
+    if (accessory.UUID === this.ALARM_UUID) {
+      this.alarmAccessory = accessory;
+    }
   }
 
-  setupAccessory() {
-    const uuid = this.api.hap.uuid.generate('mqtt-unifi-protect-alarm');
+  didFinishLaunching() {
+    this.setupAlarm();
+    this.setupZones();
+    this.connectMQTT();
+  }
 
-    if (!this.accessory) {
-      this.accessory = new this.api.platformAccessory(this.alarmName, uuid);
+  /* ---------------- ALARM ---------------- */
+
+  setupAlarm() {
+    if (!this.alarmAccessory) {
+      this.alarmAccessory = new this.api.platformAccessory(
+        this.config.alarmName || 'Home Alarm',
+        this.ALARM_UUID
+      );
       this.api.registerPlatformAccessories(
         'homebridge-mqtt-unifi-protect',
         'MqttUnifiProtectPlatform',
-        [this.accessory]
+        [this.alarmAccessory]
       );
-      this.log.info('Created new alarm accessory.');
     }
 
-    const service =
-      this.accessory.getService(Service.SecuritySystem) ||
-      this.accessory.addService(Service.SecuritySystem);
+    this.alarmService =
+      this.alarmAccessory.getService(this.Service.SecuritySystem) ||
+      this.alarmAccessory.addService(this.Service.SecuritySystem);
 
-    service.setCharacteristic(Characteristic.SecuritySystemCurrentState, this.currentState);
-    service.setCharacteristic(Characteristic.SecuritySystemTargetState, this.targetState);
+    this.alarmService
+      .getCharacteristic(this.Characteristic.SecuritySystemTargetState)
+      .on('set', (value, cb) => {
+        this.setTargetState(value);
+        cb();
+      });
 
-    service.getCharacteristic(Characteristic.SecuritySystemTargetState)
-      .onSet(this.handleSetTargetState.bind(this));
+    this.alarmService.updateCharacteristic(
+      this.Characteristic.SecuritySystemCurrentState,
+      this.state.currentState
+    );
   }
 
-  setupMqtt() {
-    if (!this.config.mqttHost) {
-      this.log.error('MQTT Host not configured.');
+  setTargetState(value) {
+    const C = this.Characteristic;
+    clearTimeout(this.exitTimer);
+    clearTimeout(this.alarmTimer);
+    this.state.targetState = value;
+
+    if (value === C.SecuritySystemTargetState.DISARM) {
+      this.state.currentState = C.SecuritySystemCurrentState.DISARMED;
+      return this.updateState();
+    }
+
+    const arm = () => {
+      this.state.currentState =
+        value === C.SecuritySystemTargetState.STAY_ARM
+          ? C.SecuritySystemCurrentState.STAY_ARM
+          : value === C.SecuritySystemTargetState.AWAY_ARM
+          ? C.SecuritySystemCurrentState.AWAY_ARM
+          : C.SecuritySystemCurrentState.NIGHT_ARM;
+
+      this.updateState();
+    };
+
+    if (this.exitDelay === 0) arm();
+    else {
+      this.log.info(`Exit delay ${this.exitDelay}s`);
+      this.exitTimer = setTimeout(arm, this.exitDelay * 1000);
+    }
+  }
+
+  /* ---------------- ZONES ---------------- */
+
+  setupZones() {
+    for (const zone of this.config.devices || []) {
+      const mac = zone.mac.replace(/:/g, '').toUpperCase();
+      const uuid = this.api.hap.uuid.generate(`zone:${mac}`);
+
+      let serviceType =
+        zone.type === 'motion'
+          ? this.Service.MotionSensor
+          : this.Service.ContactSensor;
+
+      const service =
+        this.alarmAccessory.getService(uuid) ||
+        this.alarmAccessory.addService(serviceType, zone.name, uuid);
+
+      // initialize context
+      service.context = service.context || {};
+      service.context.zone = {
+        name: zone.name,
+        mac,
+        type: zone.type,
+        armHome: !!zone.armHome,
+        armAway: !!zone.armAway,
+        entryDelay: Math.max(0, Number(zone.entryDelay ?? 0)),
+      };
+
+      // Initialize HomeKit state (false = not triggered)
+      if (serviceType === this.Service.MotionSensor) {
+        service.getCharacteristic(this.Characteristic.MotionDetected).updateValue(false);
+      } else {
+        service
+          .getCharacteristic(this.Characteristic.ContactSensorState)
+          .updateValue(this.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED);
+      }
+
+      // Set proper name and serial number
+      service.displayName = zone.name;
+      const serialChar = service.getCharacteristic(this.Characteristic.SerialNumber);
+      if (serialChar) serialChar.updateValue(mac);
+    }
+  }
+
+  /* ---------------- MQTT ---------------- */
+
+  connectMQTT() {
+    if (!this.config.mqttHost) return;
+
+    this.mqttClient = mqtt.connect({
+      host: this.config.mqttHost,
+      port: this.config.mqttPort || 1883,
+      username: this.config.mqttUsername,
+      password: this.config.mqttPassword,
+      reconnectPeriod: 0,
+    });
+
+    this.mqttClient.on('connect', () => {
+      this.log.info('MQTT connected, subscribing to each zone...');
+      for (const zone of this.config.devices || []) {
+        const mac = zone.mac.replace(/:/g, '').toUpperCase();
+        const topic = `unifi/protect/${mac}`;
+        this.mqttClient.subscribe(topic, {}, (err) => {
+          if (err) this.log.error(`MQTT subscribe failed for ${topic}`);
+          else this.log.info(`Subscribed to ${topic}`);
+        });
+      }
+    });
+
+    this.mqttClient.on('error', (err) => {
+      this.log.error(`MQTT error: ${err.message}, retrying in 60s`);
+      setTimeout(() => this.connectMQTT(), 60_000);
+    });
+
+    this.mqttClient.on('message', (topic, msg) => this.handleMQTT(topic, msg));
+  }
+
+  handleMQTT(topic, msg) {
+    let payload;
+    try {
+      payload = JSON.parse(msg.toString());
+    } catch {
       return;
     }
 
-    const url = `mqtt://${this.config.mqttHost}:${this.config.mqttPort || 1883}`;
-    this.client = mqtt.connect(url, {
-      username: this.config.mqttUsername,
-      password: this.config.mqttPassword
-    });
+    for (const service of this.alarmAccessory.services) {
+      const z = service.context?.zone;
+      if (!z) continue;
+      if (topic !== `unifi/protect/${z.mac}`) continue;
 
-    this.client.on('connect', () => {
-      this.log.info('✅ MQTT broker connected successfully.');
-      this.client.subscribe('#');
-    });
+      // Mirror MQTT state
+      let triggered = false;
+      if (z.type === 'motion' && typeof payload.motion === 'boolean') {
+        triggered = payload.motion;
+        service.getCharacteristic(this.Characteristic.MotionDetected).updateValue(triggered);
+      } else if (z.type === 'contact' && typeof payload.contact === 'boolean') {
+        triggered = payload.contact;
+        const contactState = triggered
+          ? this.Characteristic.ContactSensorState.CONTACT_DETECTED
+          : this.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED;
+        service.getCharacteristic(this.Characteristic.ContactSensorState).updateValue(contactState);
+      }
 
-    this.client.on('error', err => {
-      this.log.error('MQTT Error:', err.message);
-    });
-
-    this.client.on('message', (topic, message) => {
-      this.handleMqttMessage(topic, message.toString());
-    });
-  }
-
-  handleSetTargetState(value) {
-    this.targetState = value;
-
-    const arming =
-      value === Characteristic.SecuritySystemTargetState.AWAY_ARM ||
-      value === Characteristic.SecuritySystemTargetState.STAY_ARM;
-
-    if (arming && this.exitDelay > 0) {
-      this.log.info(`Exit delay started: ${this.exitDelay} seconds`);
-
-      setTimeout(() => {
-        this.currentState = value;
-        this.updateCurrentState();
-        this.log.info('System armed.');
-      }, this.exitDelay * 1000);
-
-    } else {
-      this.currentState = value;
-      this.updateCurrentState();
-      this.log.info('System state changed immediately.');
+      if (triggered) this.triggerAlarm(z);
+      return; // stop after first match
     }
   }
 
-  updateCurrentState() {
-    if (!this.accessory) return;
+  triggerAlarm(zone) {
+    const C = this.Characteristic;
 
-    const service = this.accessory.getService(Service.SecuritySystem);
-    service.updateCharacteristic(Characteristic.SecuritySystemCurrentState, this.currentState);
+    const armed =
+      (this.state.currentState === C.SecuritySystemCurrentState.AWAY_ARM &&
+        zone.armAway) ||
+      (this.state.currentState === C.SecuritySystemCurrentState.STAY_ARM &&
+        zone.armHome);
+
+    if (!armed) return;
+
+    const fire = () => {
+      this.log.warn(`🚨 Alarm triggered by ${zone.name}`);
+      this.state.currentState = C.SecuritySystemCurrentState.ALARM_TRIGGERED;
+      this.updateState();
+
+      this.alarmTimer = setTimeout(() => {
+        this.setTargetState(this.state.targetState);
+      }, this.alarmDuration * 1000);
+    };
+
+    if (zone.entryDelay === 0) fire();
+    else setTimeout(fire, zone.entryDelay * 1000);
   }
 
-  handleMqttMessage(topic, payload) {
-    const device = this.devices.find(d =>
-      topic.toUpperCase().includes(d.mac)
+  /* ---------------- STATE ---------------- */
+
+  updateState() {
+    this.alarmService.updateCharacteristic(
+      this.Characteristic.SecuritySystemCurrentState,
+      this.state.currentState
     );
-
-    if (!device) return;
-
-    const triggered =
-      payload === 'true' ||
-      payload === '1' ||
-      payload.toLowerCase() === 'open' ||
-      payload.toLowerCase() === 'motion';
-
-    if (!triggered) return;
-    if (!this.isSensorArmed(device)) return;
-
-    this.log.warn(`🚨 Alarm triggered by: ${device.name}`);
-
-    if (device.entryDelay > 0) {
-      this.log.info(`Entry delay started for ${device.name}: ${device.entryDelay}s`);
-      setTimeout(() => {
-        if (this.isSystemStillArmed()) this.triggerAlarm();
-      }, device.entryDelay * 1000);
-    } else {
-      this.triggerAlarm();
-    }
+    this.saveState();
   }
 
-  isSystemStillArmed() {
-    return (
-      this.currentState === Characteristic.SecuritySystemCurrentState.AWAY_ARM ||
-      this.currentState === Characteristic.SecuritySystemCurrentState.STAY_ARM
-    );
+  saveState() {
+    try {
+      fs.writeFileSync(this.stateFile, JSON.stringify(this.state));
+    } catch {}
   }
 
-  triggerAlarm() {
-    this.currentState = Characteristic.SecuritySystemCurrentState.ALARM_TRIGGERED;
-    this.updateCurrentState();
-
-    setTimeout(() => {
-      this.currentState = this.targetState;
-      this.updateCurrentState();
-      this.log.info('Alarm reset.');
-    }, this.alarmDuration * 1000);
+  loadState() {
+    try {
+      if (fs.existsSync(this.stateFile)) {
+        return JSON.parse(fs.readFileSync(this.stateFile));
+      }
+    } catch {}
+    return {};
   }
-
-  isSensorArmed(device) {
-    if (this.currentState === Characteristic.SecuritySystemCurrentState.DISARMED) {
-      return device.monitorOff === true;
-    }
-    if (this.currentState === Characteristic.SecuritySystemCurrentState.STAY_ARM) {
-      return device.armHome === true;
-    }
-    if (this.currentState === Characteristic.SecuritySystemCurrentState.AWAY_ARM) {
-      return device.armAway === true;
-    }
-    return false;
-  }
-}
-
-module.exports = MqttUnifiProtectPlatform;
+};
